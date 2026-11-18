@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neon Block Dodger EXTREME</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0b1e;font-family:system-ui,sans-serif;color:#fff}
+  #game{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;background:radial-gradient(circle at 50% 20%,#1a1a3a,#0b0b1e)}
+  #hud{position:fixed;top:10px;left:12px;right:12px;display:flex;justify-content:space-between;font-weight:800;font-size:18px;text-shadow:0 0 10px #0ff;pointer-events:none}
+  #center{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;pointer-events:none}
+  #center h1{font-size:42px;margin:0;line-height:1;text-shadow:0 0 20px #ff00ff,0 0 40px #00ffff}
+  #center p{opacity:.9;max-width:420px}
+  #btn{pointer-events:auto;background:#ff00ff;border:none;color:#fff;padding:14px 28px;border-radius:999px;font-size:18px;font-weight:900;cursor:pointer;box-shadow:0 0 20px #ff00ff}
+  #status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+</style>
+</head>
+<body>
+<canvas id="game" aria-label="Neon Block Dodger Extreme: move paddle to dodge blocks, catch coins, grab powerups"></canvas>
+<div id="hud"><span id="score">SCORE 0</span><span id="lives">❤️❤️❤️</span><span id="level">LVL 1</span></div>
+<div id="center">
+  <h1>NEON BLOCK<br>DODGER EXTREME</h1>
+  <p>Move with ← → or drag to dodge blocks. Catch gold coins. Grab power-ups: 🛡️ Shield, 🧲 Magnet, 🐌 Slow-Mo, ⚡ Dash.<br><br>Combo x5 = BONUS +250! Blocks get faster every level.</p>
+  <button id="btn">▶ PLAY</button>
+  <p id="best">Best: 0</p>
+</div>
+<p id="status" role="status" aria-live="polite"></p>
+<script>
+const cv=document.getElementById('game'),ctx=cv.getContext('2d');
+const scoreEl=document.getElementById('score'),livesEl=document.getElementById('lives'),levelEl=document.getElementById('level'),center=document.getElementById('center'),btn=document.getElementById('btn'),bestEl=document.getElementById('best'),statusEl=document.getElementById('status');
+let W,H,playing=false,score=0,coins=0,combo=0,lives=3,level=1,frame=0,high=+(localStorage.getItem('neon_best')||0);
+bestEl.textContent='Best: '+high;
+function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight}
+addEventListener('resize',resize);resize();
+const paddle={x:0,w:110,h:16,y:0,speed:11,dash:0,shield:0,magnet:0,slow:0};
+function reset(){score=0;combo=0;lives=3;level=1;frame=0;paddle.x=W/2-55;paddle.y=H-70;paddle.shield=0;paddle.magnet=0;paddle.slow=0;blocks.length=0;coinsArr.length=0;powers.length=0;parts.length=0}
+let blocks=[],coinsArr=[],powers=[],parts=[],keys={};
+let stars=Array.from({length:70},()=>({x:Math.random(),y:Math.random(),s:Math.random()*2+1}));
+function spawn(){
+  let speed=(2.2+level*0.55)*(paddle.slow>0?0.45:1);
+  if(Math.random()<0.72) blocks.push({x:Math.random()*(W-40),y:-30,w:28+Math.random()*38,h:22+Math.random()*22,vy:speed+Math.random()*1.5,rot:Math.random()*3,vr:(Math.random()-.5)*.1,color:['#ff2d55','#ff9500','#ffcc00','#ff00ff'][Math.floor(Math.random()*4)]});
+  if(Math.random()<0.28) coinsArr.push({x:Math.random()*(W-30),y:-20,r:12,vy:speed*0.9});
+  if(Math.random()<0.07) powers.push({x:Math.random()*(W-30),y:-20,r:14,vy:speed*0.8,type:['shield','magnet','slow','life'][Math.floor(Math.random()*4)]});
+}
+function burst(x,y,c){for(let i=0;i<14;i++) parts.push({x,y,vx:(Math.random()-.5)*7,vy:(Math.random()-.5)*7,life:30,c})}
+function loop(){
+  requestAnimationFrame(loop);
+  // bg stars
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#fff';
+  stars.forEach(s=>{s.y+=0.002;if(s.y>1)s.y=0;ctx.globalAlpha=.5;ctx.fillRect(s.x*W,s.y*H,s.s,s.s)});ctx.globalAlpha=1;
+  if(!playing) return;
+  frame++;
+  if(frame%Math.max(12,32-level*2)==0) spawn();
+  // input
+  if(keys['arrowleft']||keys['a']) paddle.x-=paddle.speed+(paddle.dash>0?7:0);
+  if(keys['arrowright']||keys['d']) paddle.x+=paddle.speed+(paddle.dash>0?7:0);
+  paddle.x=Math.max(0,Math.min(W-paddle.w,paddle.x));
+  if(paddle.shield>0)paddle.shield--; if(paddle.magnet>0)paddle.magnet--; if(paddle.slow>0)paddle.slow--; if(paddle.dash>0)paddle.dash--;
+  // coins magnet
+  coinsArr.forEach(c=>{if(paddle.magnet>0){let dx=paddle.x+paddle.w/2-c.x,dy=paddle.y-c.y,d=Math.hypot(dx,dy)||1;c.x+=dx/d*6;c.y+=dy/d*6} else c.y+=c.vy});
+  coinsArr=coinsArr.filter(c=>c.y<H+30);
+  blocks.forEach(b=>{b.y+=b.vy;b.rot+=b.vr});
+  powers.forEach(p=>p.y+=p.vy);
+  parts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.life--});parts=parts.filter(p=>p.life>0);
+  // collisions
+  blocks=blocks.filter(b=>{
+    let hit=b.y+b.h>paddle.y && b.y<paddle.y+paddle.h && b.x+b.w>paddle.x && b.x<paddle.x+paddle.w;
+    if(hit){
+      burst(b.x+b.w/2,b.y+b.h/2,b.color);
+      if(paddle.shield>0){score+=20;statusEl.textContent='Shield blocked a block!'}
+      else{lives--;combo=0;score=Math.max(0,score-50);burst(paddle.x+paddle.w/2,paddle.y,'#ff2d55');if(navigator.vibrate)navigator.vibrate(120);if(lives<=0)gameOver();}
+      return false;
+    }
+    if(b.y>H){score+=5;return false}
+    return true;
+  });
+  coinsArr=coinsArr.filter(c=>{
+    let hit=c.y+c.r>paddle.y && c.y-c.r<paddle.y+paddle.h && c.x>paddle.x-10 && c.x<paddle.x+paddle.w+10;
+    if(hit){combo++;score+=10+Math.min(combo,10)*2;coins++;burst(c.x,c.y,'#ffd60a');if(combo>0&&combo%5==0){score+=250;burst(paddle.x+paddle.w/2,paddle.y,'#00ffff')}return false}
+    return c.y<H+30;
+  });
+  powers=powers.filter(p=>{
+    let hit=p.y+p.r>paddle.y && p.y-p.r<paddle.y+paddle.h && p.x>paddle.x-10 && p.x<paddle.x+paddle.w+10;
+    if(hit){
+      if(p.type=='shield')paddle.shield=300; if(p.type=='magnet')paddle.magnet=400; if(p.type=='slow')paddle.slow=300; if(p.type=='life')lives=Math.min(3,lives+1);
+      score+=30;burst(p.x,p.y,'#00ff88');statusEl.textContent='Power-up: '+p.type;return false;
+    }return p.y<H+30;
+  });
+  level=1+Math.floor(score/300);
+  // draw paddle
+  let grad=ctx.createLinearGradient(paddle.x,0,paddle.x+paddle.w,0);grad.addColorStop(0,'#00ffff');grad.addColorStop(1,'#ff00ff');
+  ctx.shadowColor=paddle.shield>0?'#00ff88':'#ff00ff';ctx.shadowBlur=20;ctx.fillStyle=grad;
+  ctx.fillRect(paddle.x,paddle.y,paddle.w,paddle.h);ctx.shadowBlur=0;
+  if(paddle.shield>0){ctx.strokeStyle='#00ff88';ctx.lineWidth=3;ctx.strokeRect(paddle.x-8,paddle.y-8,paddle.w+16,paddle.h+16)}
+  // draw blocks
+  blocks.forEach(b=>{ctx.save();ctx.translate(b.x+b.w/2,b.y+b.h/2);ctx.rotate(b.rot);ctx.fillStyle=b.color;ctx.shadowColor=b.color;ctx.shadowBlur=12;ctx.fillRect(-b.w/2,-b.h/2,b.w,b.h);ctx.restore()});
+  // coins
+  coinsArr.forEach(c=>{ctx.beginPath();ctx.fillStyle='#ffd60a';ctx.shadowColor='#ffd60a';ctx.shadowBlur=14;ctx.arc(c.x,c.y,c.r,0,7);ctx.fill();ctx.shadowBlur=0;ctx.fillStyle='#000';ctx.font='bold 12px system-ui';ctx.textAlign='center';ctx.fillText('$',c.x,c.y+4)});
+  // powers
+  const em={shield:'🛡️',magnet:'🧲',slow:'🐌',life:'❤️'};
+  powers.forEach(p=>{ctx.font='22px system-ui';ctx.textAlign='center';ctx.fillText(em[p.type],p.x,p.y+8)});
+  parts.forEach(p=>{ctx.fillStyle=p.c;ctx.fillRect(p.x,p.y,4,4)});
+  scoreEl.textContent='SCORE '+score+'  • COMBO x'+combo;
+  livesEl.textContent='❤️'.repeat(Math.max(0,lives))+(paddle.shield>0?' 🛡️':'')+(paddle.magnet>0?' 🧲':'')+(paddle.slow>0?' 🐌':'');
+  levelEl.textContent='LVL '+level;
+}
+function gameOver(){
+  playing=false;center.style.display='flex';
+  if(score>high){high=score;localStorage.setItem('neon_best',high)}
+  center.querySelector('h1').innerHTML='GAME OVER!<br><span style="font-size:22px">Score: '+score+' • Coins: '+coins+' • Best: '+high+'</span>';
+  center.querySelector('p').textContent='You got hit! Try again, chase a x5 combo for +250 bonus.';
+  btn.textContent='▶ PLAY AGAIN';bestEl.textContent='Best: '+high;
+}
+btn.onclick=()=>{reset();playing=true;center.style.display='none';statusEl.textContent='Game started. Dodge blocks, catch coins. Good luck!'};
+cv.addEventListener('pointermove',e=>{if(!playing)return;let r=cv.getBoundingClientRect();paddle.x=e.clientX-r.left-paddle.w/2});
+cv.addEventListener('pointerdown',e=>{if(!playing)return;paddle.dash=12});
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(e.key==' '){paddle.dash=12;e.preventDefault()}});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+loop();
+</script>
+</body>
+</html>
